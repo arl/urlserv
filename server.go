@@ -11,15 +11,22 @@ import (
 type server struct {
 	kvs    KVS
 	hasher Hasher
+
+	servStats *serverStats
 }
 
+// newServer creates a new server, with the specified hasher and key-value store.
 func newServer(kvs KVS, hasher Hasher) *server {
 	return &server{
 		kvs:    kvs,
 		hasher: hasher,
+
+		// create a redirect counter
+		servStats: newServerStats(),
 	}
 }
 
+// shorten is an HTTP handler that shortens the URL string specified as 'url' param.
 func (s *server) shorten(w http.ResponseWriter, r *http.Request) {
 	// extract original URL.
 	org := r.URL.Query().Get("url")
@@ -48,6 +55,7 @@ func (s *server) shorten(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "shortened URL: %s\n", fullshort)
 }
 
+// redirect is an HTTP handler that redirect a known short URL to its original URL.
 func (s *server) redirect(w http.ResponseWriter, r *http.Request) {
 	// consider we received a short url, extract it.
 	short := strings.Replace(r.URL.RequestURI(), "/", "", 1)
@@ -63,5 +71,19 @@ func (s *server) redirect(w http.ResponseWriter, r *http.Request) {
 
 	// forge the redirection URL.
 	log.Printf("/ redirecting short=%s org=%s", short, org)
+
+	// increment redirect counter for that url
+	s.servStats.IncrRedirects(org)
 	http.Redirect(w, r, org, 307)
+}
+
+// stats is an HTTP handler printing current stats.
+func (s *server) stats(w http.ResponseWriter, r *http.Request) {
+	// print the redirect counter into the response.
+	err := s.servStats.Show(w)
+	if err != nil {
+		log.Println("/stats: error showing stats:", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "interval server error: %v", err)
+	}
 }
